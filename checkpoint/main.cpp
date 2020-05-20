@@ -48,11 +48,18 @@
 
 #define FXOS8700Q_WHOAMI_VAL 0xC7
 // GLOBAL VARIABLES
+EventQueue queue(32 * EVENTS_EVENT_SIZE);
+
+Thread t;
+
+float x=0.0, y=0.0, z=0.0;
+
+int m_addr = FXOS8700CQ_SLAVE_ADDR1;
 I2C i2c( PTD9,PTD8);
 
 Serial pc(USBTX, USBRX);
 
-int m_addr = FXOS8700CQ_SLAVE_ADDR1;
+
 WiFiInterface *wifi;
 
 InterruptIn btn2(SW2);
@@ -65,7 +72,9 @@ volatile int arrivedcount = 0;
 
 volatile bool closed = false;
 
+void FXOS8700CQ_readRegs(int addr, uint8_t * data, int len);
 
+void FXOS8700CQ_writeRegs(uint8_t * data, int len);
 const char* topic = "Mbed";
 
 
@@ -97,6 +106,9 @@ void messageArrived(MQTT::MessageData& md) {
 }
 
 
+
+
+
 void publish_message(MQTT::Client<MQTTNetwork, Countdown>* client) {
 
       message_num++;
@@ -105,7 +117,7 @@ void publish_message(MQTT::Client<MQTTNetwork, Countdown>* client) {
 
       char buff[100];
 
-      sprintf(buff, "QoS0 Hello, Python! #%d", message_num);
+      sprintf(buff, "QoS0 Hello, Python! #%f, %f, %f\n", x * 1000.0, y * 1000.0, z * 1000.0);
 
       message.qos = MQTT::QOS0;
 
@@ -132,7 +144,54 @@ void close_mqtt() {
       closed = true;
 
 }
+void initFXOS8700Q(void) {
 
+  uint8_t data[2];
+
+  FXOS8700CQ_readRegs( FXOS8700Q_CTRL_REG1, &data[1], 1);
+
+  data[1] |= 0x01;
+
+  data[0] = FXOS8700Q_CTRL_REG1;
+
+  FXOS8700CQ_writeRegs(data, 2);
+
+}
+
+
+void record(void) {
+
+   int16_t acc16;
+
+   uint8_t res[6];
+
+   FXOS8700CQ_readRegs(FXOS8700Q_OUT_X_MSB, res, 6);
+
+   acc16 = (res[0] << 6) | (res[1] >> 2);
+
+   if (acc16 > UINT14_MAX/2)
+
+     acc16 -= UINT14_MAX;
+
+   x = ((float)acc16) / 4096.0f;
+
+   acc16 = (res[2] << 6) | (res[3] >> 2);
+
+   if (acc16 > UINT14_MAX/2)
+
+     acc16 -= UINT14_MAX;
+
+   y = ((float)acc16) / 4096.0f;
+
+   acc16 = (res[4] << 6) | (res[5] >> 2);
+
+   if (acc16 > UINT14_MAX/2)
+
+     acc16 -= UINT14_MAX;
+
+   z = ((float)acc16) / 4096.0f;
+
+}
 
 int main() {
 
@@ -217,6 +276,15 @@ int main() {
 
 
       int num = 0;
+      initFXOS8700Q();
+
+      t.start(callback(&queue, &EventQueue::dispatch_forever));
+      
+      while(1){
+            record();
+            publish_message(&client);
+            wait(0.5);            
+      }
 
       while (num != 5) {
 
